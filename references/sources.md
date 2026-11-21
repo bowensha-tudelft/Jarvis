@@ -5,9 +5,10 @@ Each verb has one core source; the others enrich it or stand in when it fails.
 
 | Verb | Core | Added by the script |
 |---|---|---|
-| Find papers | OpenAlex keyword (title + abstract) | Firecrawl paper index (semantic), Semantic Scholar TLDR |
+| Find papers | OpenAlex keyword (title + abstract) | Firecrawl paper index + OpenAlex semantic, S2 TLDR; Crossref if OpenAlex's budget is gone |
+| Check a remembered citation | Crossref `query.bibliographic` | OpenAlex details by DOI |
 | Snowball | OpenAlex `cites:` / `referenced_works` / `related_works` | S2 TLDR |
-| Read full text | Firecrawl scrape of the OA copy | OA links from OpenAlex and S2 |
+| Read full text | OpenAlex's cached copy (GROBID TEI) | Firecrawl scrape of every free copy, published version first |
 | Web | Tavily and Firecrawl, as peers | — |
 | BibTeX | doi.org content negotiation | — |
 
@@ -28,6 +29,38 @@ Each verb has one core source; the others enrich it or stand in when it fails.
   `Authorization: Bearer`, which keeps it out of URLs and the cache.
 - `best_oa_location` / `open_access.oa_url` is Unpaywall's data, so Unpaywall is not called separately.
 - ACS abstracts arrive prefixed with "High Resolution Image Download MS PowerPoint Slide"; stripped.
+- **Coverage of preprints and new papers.** Five samples of 40 DOIs each, all 40/40 in OpenAlex:
+  ChemRxiv newest (posted the day before), ChemRxiv random, ChemRxiv 30–45 days old, arXiv
+  physics.chem-ph newest, arXiv physics.chem-ph 2023. Crossref lists 59,272 ChemRxiv DOIs (versions
+  counted separately); 57,081 OpenAlex works have a ChemRxiv copy, 32,186 of them merged with the
+  later journal article. So arXiv and ChemRxiv are not added as sources. ChemRxiv's own API answers
+  403 behind a Cloudflare challenge anyway; Firecrawl can read its PDFs (46k characters).
+- **Two kinds of 429.** `/rate-limit` lists per-second limits: 30/s overall, **1/s for semantic
+  search**. Calling semantic search twice within a second returned 429 with $0.96 of the day left.
+  The script retries, then asks `/rate-limit` (free) before saying the budget is gone.
+- **Semantic search filters**: only `type`, `publication_year`, `is_oa`, `primary_location.source.id`,
+  `has_abstract`, `has_fulltext`, `language`, `is_retracted`, `primary_location.license` and id
+  filters. `is_paratext`, `raw_author_name.search` and `locations.source.id` return HTTP 400, so the
+  script maps the source filter to `primary_location` and applies the author filter to the results.
+- **Authors**: `raw_author_name.search:Grimme` 60 hits, "Stefan Grimme" 56, "S. Grimme" 2. Surnames only.
+  Author names in the keyword query break it: "g-xTB tight-binding Grimme" found 1 unrelated paper.
+- **Full text** (`content.openalex.org/works/<id>.grobid-xml`): cached PDFs and GROBID parses for
+  60M+ open-access works, $0.01 each (about 100 a day on a free key). The g-xTB preprint: 128k
+  characters with section headings in 0.5 s; an ACS Central Science article: 12 headings, 21
+  paragraphs. Served gzip-compressed whatever the request says. GROBID leaves some sections without a
+  heading; the script labels them rather than let them inherit the previous heading (an introduction
+  paragraph was reported as "Abstract" before that fix).
+- **Free copies**: of 50 open-access PFAS papers, 17 had more than one free copy and 30 had a
+  repository copy. `locations[].version` says which: published, accepted or submitted (preprint).
+
+## Crossref
+
+- `query.bibliographic` matches loosely over authors, title, venue and year. "Dichtel 2017 Nature
+  beta-cyclodextrin polymer PFOA" (the paper is in JACS): OpenAlex found 0, Crossref ranked the JACS
+  paper first once its supporting-information DOI (`10.1021/jacs.7b02381.s001`, type `component`) was
+  filtered out. "Grimme 2025 g-xTB general purpose extended tight-binding": the ChemRxiv preprint first.
+- Free, no key, no daily budget. No arXiv (DataCite DOIs), abstracts only for some publishers, and
+  `is-referenced-by-count` is Crossref's own count, lower than OpenAlex's (56 vs 100 for g-xTB).
 
 ## Semantic Scholar
 
@@ -36,6 +69,10 @@ Each verb has one core source; the others enrich it or stand in when it fails.
 - `POST /paper/batch` (up to 500 ids) works without a key: one call enriches a whole result list
   with `tldr`, `influentialCitationCount` and `openAccessPdf`.
 - TLDRs are missing for many publisher papers (ACS often has none). Missing means empty, not an error.
+- A batch in which S2 knows **none** of the papers (e.g. one ChemRxiv preprint) is answered with HTTP 400
+  "No valid paper ids given", not with nulls. Treated as "no data".
+- 429s come at random, with or without a key: at 3 s spacing `200, 200, 429, 200`; at 0.5 s
+  `200, 200, 429, 200`. Retried with jittered back-off; a failure only drops the TLDRs.
 - Citation contexts / intents / per-citation `isInfluential`: 0/25, 0/25, 1/25 filled (AI en Man).
   Not used.
 

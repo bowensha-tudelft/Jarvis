@@ -1,27 +1,25 @@
-"""The six commands. Each prints compact text for the model and returns an exit code.
+"""Finding papers: find, cite, paper, verify. Each prints compact text and returns an exit code.
 
 One source failing never sinks a command that has other sources: the failure becomes a
 `Note:` line and the rest is printed. Only when nothing at all came back is the exit code 1.
 """
-import os
-import re
-
-from . import bib, fmt, net, s2, web
+from . import crossref, fmt, net, s2, web
 from . import openalex as oa
 
-TEXTS_DIR = os.path.join(net.HOME, 'texts')
 NEXT = ('Next: `paper <doi>` for the abstract, `cite <doi>` to snowball, '
         '`read <doi> --find "<terms>"` to check the full text, `bib <doi> ...` for BibTeX.')
 
 
-def _notes(notes):
+def notes_out(notes):
     for n in notes:
         print('Note: ' + n)
 
 
 def _semantic(query, filters, n, notes):
-    """Firecrawl's paper index first (keeps constraints, carries a matching passage), looked up in
-    OpenAlex so the record has venue and citations. OpenAlex's own semantic mode if that is empty."""
+    """Firecrawl's paper index (keeps constraints, carries a matching passage) merged with OpenAlex's
+    semantic search. Both run: the index has no ChemRxiv and thin chemistry-journal coverage (for the
+    2025 g-xTB preprint it returned 8 hits, none of them the paper), OpenAlex has the rest."""
+    lists, parts = [], []
     try:
         hits = web.paper_index(query, k=max(n * 2, 10))
         if hits:
@@ -32,23 +30,23 @@ def _semantic(query, filters, n, notes):
                 if p:
                     p['passage'] = h['passage']
                     rows.append(p)
-            if rows:
-                left = len(hits) - len(rows)
-                return rows, 'paper index %d hits%s' % (
-                    len(hits), ', %d dropped by filters or missing in OpenAlex' % left if left else '')
+            lists.append(rows)
+            parts.append('paper index %d hits (%d after filters)' % (len(hits), len(rows)))
     except net.SourceError as e:
-        notes.append('Firecrawl paper index failed (%s); used OpenAlex semantic search instead' % e)
+        notes.append('Firecrawl paper index failed (%s)' % e)
     try:
         rows = oa.search_semantic(query, filters, n)
-        return rows, 'OpenAlex semantic %d hits (capped near 50, not exhaustive)' % len(rows)
+        lists.append(rows)
+        parts.append('OpenAlex semantic %d' % len(rows))
     except net.SourceError as e:
         notes.append(str(e))
-        return [], 'semantic failed'
+    return fmt.merge(*lists), ', '.join(parts) or 'semantic failed'
 
 
 def find(a):
-    filters = oa.build_filters(a.years, a.type, a.oa)
+    filters = oa.build_filters(a.years, a.type, a.oa, a.source, a.author)
     notes, lists, parts = [], [], []
+    oa_down = False
     if a.mode in ('auto', 'keyword'):
         try:
             rows, total = oa.search(a.query, filters, a.sort, a.n, fulltext=a.fulltext)
@@ -56,10 +54,18 @@ def find(a):
             parts.append('keyword (%s) %s total' % ('full text' if a.fulltext else 'title+abstract', total))
         except net.SourceError as e:
             notes.append(str(e))
-    if a.mode in ('auto', 'semantic'):
+            oa_down = e.status == 429
+    if a.mode in ('auto', 'semantic') and not oa_down:
         rows, desc = _semantic(a.query, filters, a.n, notes)
         lists.append(rows)
         parts.append(desc)
+    if oa_down:
+        try:
+            rows = crossref.search(a.query, a.n, a.years)
+            lists.append(rows)
+            parts.append('Crossref fallback %d (no abstracts; --type/--author/--source/--oa not applied)' % len(rows))
+        except net.SourceError as e:
+            notes.append(str(e))
     merged = fmt.merge(*lists)
     if a.sort == 'cited':
         merged.sort(key=lambda p: -p['cited'])
@@ -67,29 +73,45 @@ def find(a):
         merged.sort(key=lambda p: -(p['year'] or 0))
     merged = merged[:a.n]
     if not merged:
-        _notes(notes)
+        notes_out(notes)
         print('No papers found for: %s' % a.query)
+        print('Try: fewer words, a synonym or the spelled-out term, the abbreviation with and without '
+              'its hyphen ("g-xTB" vs "gxTB"), author names via --author, or `verify` for a remembered citation.')
         return 1 if notes else 0
     if not a.no_tldr:
         n = s2.enrich(merged)
         if n:
             notes.append(n)
-    print('find "%s" | %s | showing %d, sort=%s%s' % (
-        a.query, '; '.join(parts), len(merged), a.sort,
-        ' | found by both keyword and semantic search are listed first' if a.mode == 'auto' and a.sort == 'relevance' else ''))
-    _notes(notes)
+    flt = ', '.join(x for x in (a.author and 'author=' + oa.surname_only(a.author), a.source and 'source=' + a.source) if x)
+    print('find "%s"%s | %s | showing %d, sort=%s%s' % (
+        a.query, ' [%s]' % flt if flt else '', '; '.join(parts), len(merged), a.sort,
+        ' | found by more than one search listed first' if a.mode == 'auto' and a.sort == 'relevance' else ''))
+    notes_out(notes)
     print()
     print(fmt.papers(merged, 900 if a.abstract else 0))
     print('\n' + NEXT)
     return 0
 
 
+def _not_found(ident):
+    """OpenAlex has no match: show Crossref's closest records instead of a bare 'not found'."""
+    print('OpenAlex has no record matching: %s' % ident)
+    try:
+        cands = crossref.match(ident, 3)
+    except net.SourceError as e:
+        print('Note: Crossref lookup failed too (%s)' % e)
+        return 1
+    if cands:
+        print('Closest records in Crossref (check authors, year and venue before using one):\n')
+        print(fmt.papers(cands))
+    return 1
+
+
 def cite(a):
     seed = oa.work(a.id)
     if not seed:
-        print('Not found in OpenAlex: %s. Find it first with `find`, then use its DOI.' % a.id)
-        return 1
-    filters = oa.build_filters(a.years, a.type, False)
+        return _not_found(a.id)
+    filters = oa.build_filters(a.years, a.type, False, None, a.author)
     rows, total = oa.citations(seed, a.dir, filters, a.sort, a.n)
     label = {'citers': 'papers citing it', 'refs': 'its references', 'related': 'related papers'}[a.dir]
     print('cite: %s (%s) -> %s: %s in total, showing %d' % (
@@ -109,14 +131,13 @@ def cite(a):
 def paper(a):
     code = 0
     for i, ident in enumerate(a.ids):
-        p = oa.work(ident)
-        if not p:
-            print('Not found in OpenAlex: %s' % ident)
-            code = 1
-            continue
-        note = s2.enrich([p])
         if i:
             print('\n' + '=' * 60)
+        p = oa.work(ident)
+        if not p:
+            code = _not_found(ident)
+            continue
+        note = s2.enrich([p])
         print(p['title'])
         names = p['authors']
         print('Authors: ' + ', '.join(names[:12]) + (' ... (%d authors)' % len(names) if len(names) > 12 else ''))
@@ -125,7 +146,12 @@ def paper(a):
         print('doi:%s | openalex:%s' % (p['doi'] or '-', p['openalex_id']))
         infl = ' (influential %s)' % p['influential'] if p.get('influential') is not None else ''
         print('Cited by %d%s | references %d | topics: %s' % (p['cited'], infl, len(p['refs']), '; '.join(p['topics']) or '-'))
-        print('Open access: %s%s' % (p['oa_status'], (' -> ' + ' , '.join(dict.fromkeys(p['oa_urls']))) if p['oa_urls'] else ''))
+        copies = ['%s (%s%s)' % (c['url'], c['version'], ', ' + c['source'] if c['source'] else '') for c in p['copies'][:4]]
+        print('Open access: %s%s' % (p['oa_status'], ' | OpenAlex holds the full text' if p['has_text'] else ''))
+        for c in copies:
+            print('  free copy: ' + c)
+        if p['type'] == 'preprint':
+            print('Preprint: not peer-reviewed. Check whether a journal version exists before citing it as published.')
         if note:
             print('Note: ' + note)
         if p.get('tldr'):
@@ -134,163 +160,23 @@ def paper(a):
     return code
 
 
-def _slug(s):
-    return re.sub(r'[^A-Za-z0-9._-]+', '_', s)[:120]
-
-
-def read(a):
-    target = a.target.strip()
-    notes = []
-    if re.match(r'^https?://', target) and 'doi.org/' not in target:
-        urls, label, slug = [target], target, _slug(re.sub(r'^https?://', '', target))
-    else:
-        p = oa.work(target)
-        if not p:
-            print('Not found in OpenAlex: %s' % target)
-            return 1
-        n = s2.enrich([p])
-        if n:
-            notes.append(n)
-        urls = list(dict.fromkeys(p['oa_urls']))
-        label = '%s (%s) doi:%s' % (p['title'], p['year'], p['doi'])
-        slug = _slug(p['doi'] or p['openalex_id'])
-        if not urls:
-            print('No open-access copy is known for: %s' % label)
-            print('OA status: %s. Use the abstract (`paper %s`), or ask the user for the PDF and read it locally.'
-                  % (p['oa_status'], p['doi'] or p['openalex_id']))
-            return 1
-    md, title, used = '', '', None
-    for u in urls:
-        try:
-            md, title = web.scrape(u)
-        except net.SourceError as e:
-            notes.append('%s -> %s' % (u, e))
-            continue
-        if len(md) >= 1500:
-            used = u
-            break
-        notes.append('%s -> only %d characters' % (u, len(md)))
-    if not used:
-        _notes(notes)
-        print('Could not read a full text for: %s' % label)
+def verify(a):
+    """A citation as the user remembers it -> the records that actually exist."""
+    try:
+        cands = crossref.match(a.citation, a.n)
+    except net.SourceError as e:
+        print('Error: %s' % e)
         return 1
-    os.makedirs(TEXTS_DIR, exist_ok=True)
-    path = os.path.join(TEXTS_DIR, slug + '.md')
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write('<!-- source: %s -->\n%s\n' % (used, md))
-    print('read: %s' % label)
-    print('Source: %s | %d characters | full text saved to %s' % (used, len(md), path))
-    if not re.search(r'(?im)^#+\s*.*(introduction|conclusion|results|discussion|methods)', md):
-        print('Warning: no Introduction/Results/Conclusion heading found. This may be a landing page '
-              'or abstract only, not the full text.')
-    _notes(notes)
-    print(fmt.BANNER)
-    if a.find:
-        terms = [t.strip() for f in a.find for t in f.split(';') if t.strip()]
-        found, total = fmt.find_passages(md, terms, k=a.k)
-        print('%d paragraphs match %s; showing %d.\n' % (total, terms, len(found)))
-        print('\n\n'.join(found) if found else '(no paragraph matches; try other words or read the saved file)')
-    else:
-        print('--- text start ---')
-        print(md[:a.max] + ('\n...[cut at %d of %d characters; the full text is in the saved file]' % (a.max, len(md))
-                            if len(md) > a.max else ''))
-        print('--- text end ---')
+    if not cands:
+        print('Crossref has nothing resembling: %s' % a.citation)
+        return 1
+    try:   # one OpenAlex request adds citation counts, OA status and full-text availability
+        found = oa.by_dois([c['doi'] for c in cands])
+        cands = [found.get(c['doi'], c) for c in cands]
+    except net.SourceError as e:
+        print('Note: OpenAlex details skipped (%s)' % e)
+    print('verify "%s" | closest %d records in Crossref, best match first.' % (a.citation, len(cands)))
+    print('A close match is not proof: compare authors, year, venue and title with what the user '
+          'remembers, and say which parts differ.\n')
+    print(fmt.papers(cands))
     return 0
-
-
-def web_search(a):
-    domains = [d.strip() for d in (a.domains or '').split(',') if d.strip()]
-    eng = a.engine
-    if eng == 'auto':
-        eng = 'both' if net.key('tavily') else 'firecrawl'
-    notes, answer, lists = [], '', []
-    if eng in ('tavily', 'both'):
-        try:
-            answer, rows = web.tavily_search(a.query, a.n, domains, 'advanced' if a.deep else 'basic')
-            lists.append(rows)
-        except net.SourceError as e:
-            notes.append(str(e))
-    if eng in ('firecrawl', 'both'):
-        q = a.query + ''.join(' site:' + d for d in domains[:1])
-        try:
-            lists.append(web.firecrawl_search(q, a.n))
-        except net.SourceError as e:
-            notes.append(str(e))
-    seen, rows = set(), []
-    for i in range(max((len(l) for l in lists), default=0)):
-        for l in lists:
-            if i < len(l) and l[i]['url'] not in seen:
-                seen.add(l[i]['url'])
-                rows.append(l[i])
-    print('web "%s" | engines: %s | %d results' % (a.query, eng, len(rows)))
-    _notes(notes)
-    if not rows:
-        return 1 if notes else 0
-    print(fmt.BANNER)
-    if answer:
-        print('Tavily generated summary (unverified, check against the sources): ' + answer)
-    for i, r in enumerate(rows, 1):
-        print('\n[%d] %s (%s)\n    %s\n    %s' % (i, r['title'], r['engine'], r['url'], fmt.clip(r['snippet'], 400)))
-    return 0
-
-
-def bibtex(a):
-    entries, code = [], 0
-    for d in a.dois:
-        try:
-            entries.append((oa.norm_doi(d), bib.fetch(d)))
-        except net.SourceError as e:
-            print('% ' + str(e))
-            code = 1
-    if a.out:
-        added, skipped = bib.append(a.out, entries)
-        print('%% %s: added %d, already there %d' % (os.path.abspath(a.out), added, skipped))
-    print('\n\n'.join(b for _, b in entries))
-    return code
-
-
-def status(a):
-    print('Config: %s' % net.CONFIG_PATH)
-    for s in ('openalex', 's2', 'tavily', 'firecrawl'):
-        k = net.key(s)
-        print('  %-10s %s' % (s, 'key set (...%s)' % k[-4:] if k else 'no key'))
-    n, size = net.cache_size()
-    print('Cache: %s (%d files, %.1f MB). Saved full texts: %s' % (net.CACHE_DIR, n, size / 1e6, TEXTS_DIR))
-    if not a.check:
-        return 0
-    # A cached answer would say a key works after it has been revoked: always ask the services.
-    net.FRESH = True
-    print('\nChecking each source (one small live request each):')
-    checks = [
-        ('openalex', lambda: oa._get('/rate-limit' if net.key('openalex') else '/works?filter=doi:10.1039/d0cs00620c&select=id', 0)),
-        ('s2', _check_s2),
-        ('firecrawl', lambda: net.request('firecrawl', web.FC + '/team/credit-usage', headers=web._fc_headers())
-         if net.key('firecrawl') else web.paper_index('cyclodextrin', 1)),
-        ('tavily', lambda: web.tavily_search('OpenAlex API', 1)),
-    ]
-    code = 0
-    for name, fn in checks:
-        try:
-            r = fn()
-            print('  %-10s ok %s' % (name, _summary(r)))
-        except net.SourceError as e:
-            print('  %-10s FAILED %s' % (name, e))
-            code = 1
-    return code
-
-
-def _check_s2():
-    # enrich() reports failure as a returned note rather than raising, because inside `find` a
-    # failed TLDR lookup must not sink the results. Here a failure must be a failure.
-    p = {'doi': '10.1039/d0cs00620c'}
-    note = s2.enrich([p])
-    if note:
-        raise net.SourceError('s2', 0, note)
-    return 'TLDR: ' + (p.get('tldr') or '(none)')[:80]
-
-
-def _summary(r):
-    if isinstance(r, str):
-        return '' if r == 'ok' else r[:150]
-    s = ' '.join(str(r).split())
-    return s[:220]

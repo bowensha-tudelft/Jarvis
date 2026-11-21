@@ -3,7 +3,8 @@
 Measured: anonymous /paper/search returned HTTP 429 eight times out of eight, so it is not
 used. The batch endpoint answers one POST for up to 500 papers and works without a key,
 which makes it cheap to add a one-sentence TLDR and the influential-citation count to a
-whole result list. Citation contexts and intents came back empty for 0/25 papers, so they
+whole result list. It answers 429 at random, with or without a key and at 0.5 s or 3 s spacing
+(measured 2026-11), so it is retried with jittered back-off and a failure only drops the TLDRs. Citation contexts and intents came back empty for 0/25 papers, so they
 are not requested.
 """
 from . import net
@@ -24,8 +25,16 @@ def enrich(papers):
         rows = []
         for i in range(0, len(todo), 500):
             chunk = todo[i:i + 500]
-            rows += net.request('s2', URL, method='POST', headers=headers, ttl=TTL, retries=3,
-                                body={'ids': ['DOI:' + p['doi'] for p in chunk]})
+            try:
+                rows += net.request('s2', URL, method='POST', headers=headers, ttl=TTL, retries=5,
+                                    body={'ids': ['DOI:' + p['doi'] for p in chunk]})
+            except net.SourceError as e:
+                # A batch in which S2 knows none of the papers is answered with HTTP 400
+                # "No valid paper ids given" (e.g. a single ChemRxiv preprint), not with nulls.
+                if e.status == 400 and 'No valid paper ids' in str(e):
+                    rows += [None] * len(chunk)
+                else:
+                    raise
     except net.SourceError as e:
         return 'Semantic Scholar enrichment skipped (%s)' % e
     for p, r in zip(todo, rows):

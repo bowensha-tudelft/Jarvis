@@ -4,9 +4,10 @@ A [Claude Code](https://claude.com/claude-code) skill for literature research: s
 finding evidence for claims while writing a paper. It combines four sources behind one script, so
 the agent runs one command where it would otherwise juggle four tools:
 
-- **OpenAlex** finds papers (title + abstract search) and walks citations
+- **OpenAlex** finds papers (title + abstract search), walks citations and serves cached full texts
+- **Crossref** checks half-remembered citations, and answers when OpenAlex's daily budget is gone
 - **Firecrawl** adds semantic search over its paper index (with the matching passage from the full
-  text), reads open-access full texts, and searches the web
+  text), reads the free copies OpenAlex does not hold, and searches the web
 - **Semantic Scholar** adds a one-line TLDR and influential-citation counts to every result
 - **Tavily** searches the web alongside Firecrawl
 - **doi.org** produces BibTeX
@@ -49,6 +50,8 @@ python ~/.claude/skills/jarvis/scripts/jarvis.py status --check
 ```
 python scripts/jarvis.py find "cyclodextrin polymer PFAS adsorption" --years 2020-
 python scripts/jarvis.py cite 10.1021/acscentsci.2c00478 --dir refs
+python scripts/jarvis.py find "g-xTB" --author Grimme --source chemrxiv
+python scripts/jarvis.py verify "Dichtel 2017 Nature cyclodextrin polymer PFOA"
 python scripts/jarvis.py read 10.1021/acscentsci.2c00478 --find "ionic strength; short-chain"
 python scripts/jarvis.py bib 10.1021/acscentsci.2c00478 --out refs.bib
 ```

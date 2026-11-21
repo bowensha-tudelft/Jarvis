@@ -7,6 +7,7 @@ from . import net
 from .openalex import norm_doi
 
 TTL = 365 * 86400
+PREPRINT_SERVERS = {'10.26434': 'ChemRxiv', '10.48550': 'arXiv', '10.1101': 'bioRxiv', '10.20944': 'Preprints.org'}
 
 
 def fetch(doi):
@@ -41,6 +42,14 @@ def tidy(text, doi):
     words = [w for w in re.findall(r'[A-Za-z]+', _ascii(fields.get('title', ''))) if len(w) > 3]
     key = '%s%s%s' % (surname, year, words[0].capitalize() if words else '')
     fields['doi'] = doi
+    # doi.org gives a ChemRxiv preprint as @article with no journal (and the server's publisher, ACS),
+    # which typesets with no venue and makes biblatex warn. Make it a preprint entry instead.
+    if kind.lower() == 'article' and not fields.get('journal'):
+        server = PREPRINT_SERVERS.get(doi.split('/')[0]) or fields.get('publisher', '')
+        kind = 'misc'
+        fields.pop('publisher', None)
+        fields['howpublished'] = server + ' preprint' if server else 'Preprint'
+        fields['note'] = 'Not peer-reviewed'
     if 'pages' in fields:
         fields['pages'] = re.sub(r'\s*[‐-―-]+\s*', '--', fields['pages'])
     lines = ['@%s{%s,' % (kind, key)]

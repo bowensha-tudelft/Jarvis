@@ -4,7 +4,9 @@ Keys come from environment variables first, then ~/.jarvis/config.json. They are
 put into URLs (every source accepts a header), so a cache key never contains a secret and
 an error message that echoes a URL never leaks one.
 """
+import gzip
 import hashlib
+import random
 import json
 import os
 import time
@@ -105,13 +107,17 @@ def request(source, url, *, method='GET', body=None, headers=None, ttl=0,
         req = urllib.request.Request(url, data=data, headers=h, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                text = resp.read().decode('utf-8', 'replace')
+                body_bytes = resp.read()
+            # OpenAlex's content API stores and serves gzip regardless of Accept-Encoding.
+            if body_bytes[:2] == b'\x1f\x8b':
+                body_bytes = gzip.decompress(body_bytes)
+            text = body_bytes.decode('utf-8', 'replace')
             break
         except urllib.error.HTTPError as e:
             detail = e.read().decode('utf-8', 'replace')[:300]
             if (e.code == 429 or e.code >= 500) and attempt < retries:
                 attempt += 1
-                time.sleep(2 ** attempt)
+                time.sleep(min(2 ** attempt, 8) * (0.5 + random.random()))   # jitter: S2's 429s come in bursts
                 continue
             raise SourceError(source, e.code, 'HTTP %d %s' % (e.code, _short(detail)))
         except (urllib.error.URLError, TimeoutError, OSError) as e:

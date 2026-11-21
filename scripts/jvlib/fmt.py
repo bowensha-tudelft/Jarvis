@@ -18,7 +18,9 @@ def paper(p, i, abstract_chars=0):
     cited = 'cited %d' % p.get('cited', 0)
     if p.get('influential') is not None:
         cited += ' (influential %d)' % p['influential']
-    meta += [cited, 'OA ' + p.get('oa_status', '?')]
+    meta += [cited, 'OA ' + p.get('oa_status', '?') + (', full text' if p.get('has_text') else '')]
+    if p.get('from') == 'crossref':
+        meta.append('from Crossref')
     lines = ['[%d] %s' % (i, p.get('title') or '?'), '    ' + ' | '.join(meta)]
     lines.append('    ' + ('doi:' + p['doi'] if p.get('doi') else 'openalex:' + p.get('openalex_id', '?')))
     if p.get('tldr'):
