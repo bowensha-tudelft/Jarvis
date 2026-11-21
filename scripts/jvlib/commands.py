@@ -261,7 +261,7 @@ def status(a):
     print('\nChecking each source (one small request each):')
     checks = [
         ('openalex', lambda: oa._get('/rate-limit' if net.key('openalex') else '/works?filter=doi:10.1039/d0cs00620c&select=id', 0)),
-        ('s2', lambda: s2.enrich([{'doi': '10.1039/d0cs00620c'}]) or 'ok'),
+        ('s2', _check_s2),
         ('firecrawl', lambda: net.request('firecrawl', web.FC + '/team/credit-usage', headers=web._fc_headers())
          if net.key('firecrawl') else web.paper_index('cyclodextrin', 1)),
         ('tavily', lambda: web.tavily_search('OpenAlex API', 1)),
@@ -275,6 +275,16 @@ def status(a):
             print('  %-10s FAILED %s' % (name, e))
             code = 1
     return code
+
+
+def _check_s2():
+    # enrich() reports failure as a returned note rather than raising, because inside `find` a
+    # failed TLDR lookup must not sink the results. Here a failure must be a failure.
+    p = {'doi': '10.1039/d0cs00620c'}
+    note = s2.enrich([p])
+    if note:
+        raise net.SourceError('s2', 0, note)
+    return 'TLDR: ' + (p.get('tldr') or '(none)')[:80]
 
 
 def _summary(r):
