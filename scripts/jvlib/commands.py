@@ -258,7 +258,9 @@ def status(a):
     print('Cache: %s (%d files, %.1f MB). Saved full texts: %s' % (net.CACHE_DIR, n, size / 1e6, TEXTS_DIR))
     if not a.check:
         return 0
-    print('\nChecking each source (one small request each):')
+    # A cached answer would say a key works after it has been revoked: always ask the services.
+    net.FRESH = True
+    print('\nChecking each source (one small live request each):')
     checks = [
         ('openalex', lambda: oa._get('/rate-limit' if net.key('openalex') else '/works?filter=doi:10.1039/d0cs00620c&select=id', 0)),
         ('s2', _check_s2),

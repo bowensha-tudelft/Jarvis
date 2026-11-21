@@ -33,7 +33,7 @@ Common options: `--years 2020-2025` (or `2022-`, `-2015`), `--type review`, `--s
 
 Keys live in `~/.jarvis/config.json` (fields `openalex_api_key`, `s2_api_key`, `tavily_api_key`, `firecrawl_api_key`), outside the skill folder so they never end up in its git repo. Environment variables `OPENALEX_API_KEY`, `S2_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY` override the file. To add or change a key, ask the user to edit that file themselves and save it. Do not ask them to paste a key into the chat, where it would stay in the conversation log.
 
-Check the keys with `jarvis.py --fresh status --check` when the user asks whether the keys work, after they edit the config, or when a command reports HTTP 401/403, "credits used up" or "no key configured". `--fresh` makes sure the answer comes from the live service, not the cache. It sends one small request per source and costs almost nothing: OpenAlex `/rate-limit` is free, and Tavily spends 1 credit.
+Check the keys with `jarvis.py status --check` when the user asks whether the keys work, after they edit the config, or when a command reports HTTP 401/403, "credits used up" or "no key configured". It always asks the live services, never the cache, so a revoked key cannot show as working. It sends one small request per source and costs almost nothing: OpenAlex `/rate-limit` is free, and Tavily spends 1 credit.
 
 Reading the result:
 
