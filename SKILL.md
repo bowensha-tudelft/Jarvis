@@ -23,11 +23,31 @@ python "$HOME/.claude/skills/jarvis/scripts/jarvis.py" <command> ...
 | `read <doi\|url> --find "a; b"` | Reads the open-access full text (Firecrawl) and returns only the paragraphs containing the terms, with section and position. Without `--find` it prints the start of the text. The full text is saved to `~/.jarvis/texts/` for Grep/Read later |
 | `web "<query>"` | Web search, Tavily and Firecrawl merged. `--domains echa.europa.eu,epa.gov` to restrict. For reports, regulations, standards, datasets, news |
 | `bib <doi> ... --out refs.bib` | BibTeX from doi.org, readable keys, appended without duplicates |
-| `status --check` | Which keys are set; pings each source |
+| `status --check` | Which keys are set; pings each source (see "API keys" below) |
 
 Common options: `--years 2020-2025` (or `2022-`, `-2015`), `--type review`, `--sort relevance|cited|recent`, `-n 20`, `--abstract`, `--oa`, `--mode keyword|semantic`, `--fresh` (skip cache). Keyword queries take `AND`, `OR`, `NOT`, `()` and `"phrases"`. More query syntax: `references/openalex-query.md`.
 
 **Read the `Note:` lines.** A failed source does not stop the command; it is reported there.
+
+## API keys: setting and checking them
+
+Keys live in `~/.jarvis/config.json` (fields `openalex_api_key`, `s2_api_key`, `tavily_api_key`, `firecrawl_api_key`), outside the skill folder so they never end up in its git repo. Environment variables `OPENALEX_API_KEY`, `S2_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY` override the file. To add or change a key, ask the user to edit that file themselves and save it. Do not ask them to paste a key into the chat, where it would stay in the conversation log.
+
+Check the keys with `jarvis.py --fresh status --check` when the user asks whether the keys work, after they edit the config, or when a command reports HTTP 401/403, "credits used up" or "no key configured". `--fresh` makes sure the answer comes from the live service, not the cache. It sends one small request per source and costs almost nothing: OpenAlex `/rate-limit` is free, and Tavily spends 1 credit.
+
+Reading the result:
+
+| Line | Means |
+|---|---|
+| `openalex ok {... daily_remaining_usd ...}` | Key valid. The figures are the day's budget in USD; each request costs about $0.001 |
+| `s2 ok TLDR: ...` | Key valid and the batch lookup works |
+| `firecrawl ok {... remainingCredits ...}` | Key valid; credits left in this billing period |
+| `tavily ok (...)` | Key valid; a real search came back |
+| `<source> FAILED ... HTTP 401` or `403` | Key wrong or revoked. Ask the user to re-copy it from that service's dashboard |
+| `FAILED ... credits used up` / HTTP 402, 429, 432, 433 | Key valid but out of quota |
+| `no key` in the list at the top | Not configured. OpenAlex, S2 and Firecrawl still work at much lower limits; Tavily does not work at all |
+
+When reporting to the user, give per source: works or not, and what is left. Never print the key itself; `status` shows only its last four characters.
 
 ## Workflow A — scoping a topic (课题调研)
 
