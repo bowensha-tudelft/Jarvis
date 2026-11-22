@@ -18,7 +18,13 @@ def paper(p, i, abstract_chars=0):
     cited = 'cited %d' % p.get('cited', 0)
     if p.get('influential') is not None:
         cited += ' (influential %d)' % p['influential']
+    if p.get('recent_cites'):
+        cited += ', %d in the last two years' % p['recent_cites']
+    if p.get('fwci') is not None:
+        cited += ', FWCI %.1f' % p['fwci']
     meta += [cited, 'OA ' + p.get('oa_status', '?') + (', full text' if p.get('has_text') else '')]
+    if p.get('retracted'):
+        meta.insert(0, 'RETRACTED')
     if p.get('from') == 'crossref':
         meta.append('from Crossref')
     lines = ['[%d] %s' % (i, p.get('title') or '?'), '    ' + ' | '.join(meta)]

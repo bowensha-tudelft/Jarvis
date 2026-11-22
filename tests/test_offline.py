@@ -119,7 +119,7 @@ s2.enrich = lambda ps: None
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     code = commands.find(argparse.Namespace(query='x', years=None, type=None, oa=False, source=None, author=None,
-                                            mode='auto', sort='relevance', n=5, fulltext=False, no_tldr=True, abstract=False))
+                                            mode='auto', sort='relevance', n=5, fulltext=False, tldr=False, abstract=False))
 out = buf.getvalue()
 t('OpenAlex 429 -> Crossref results shown', code == 0 and 'From Crossref' in out and 'Crossref fallback' in out)
 t('the 429 is still reported', 'daily budget used up' in out)
@@ -157,6 +157,55 @@ print('issue year')
 art = bib.tidy('@article{A_2015, title={Rapid removal}, journal={Nature}, volume={529}, author={Alsbaiee, A.}, '
                'year={2015}}', '10.1038/nature16185', 2016)
 t('printed issue year replaces the online year, key included', 'year = {2016}' in art and art.startswith('@article{Alsbaiee2016'))
+
+print('checkbib')
+from jvlib import checkbib as cb  # noqa: E402
+bibtext = ('@comment{x}\n@article{A1, title={Rapid {removal} of x}, author={Alsbaiee, A. and Smith, B.}, year={2016},\n'
+           '  doi={10.1038/nature16185}, pages={190--194}}\n@misc{B2, title = "No braces", year = 2020}\n')
+entries = cb.parse_bib(bibtext)
+t('entries parsed, @comment skipped', [e[1] for e in entries] == ['A1', 'B2'])
+t('nested braces in a field kept', entries[0][2]['title'] == 'Rapid {removal} of x')
+t('surname from "Last, First and ..."', cb._surname(entries[0][2]['author']) == 'Alsbaiee')
+t('diacritics folded for comparison', cb._fold('Barın') == cb._fold('Barin'))
+saved_cr = cb._cr
+cb._cr = lambda doi: {'title': ['Rapid removal of x'], 'author': [{'family': 'Alsbaiee'}], 'volume': '529',
+                      'page': '190-194', 'issued': {'date-parts': [[2015]]}, 'published-print': {'date-parts': [[2016]]},
+                      'type': 'journal-article'}
+iss, _ = cb.check_entry('article', 'A1', entries[0][2], {})
+t('a correct entry has no issues (print year 2016 accepted)', iss == [])
+cb._cr = lambda doi: {'title': ['Nano-Bio Interactions in Cancer'], 'author': [{'family': 'Liu'}], 'type': 'journal-article'}
+iss, _ = cb.check_entry('article', 'A1', entries[0][2], {})
+t('a DOI pointing to another paper is caught', bool(iss) and iss[0].startswith('DOI points to a different paper'))
+cb._cr = lambda doi: {'title': ['Rapid removal of x'], 'author': [{'family': 'Alsbaiee'}], 'type': 'posted-content',
+                      'relation': {'is-preprint-of': [{'id': '10.1021/real'}]}, 'issued': {'date-parts': [[2016]]}}
+iss, _ = cb.check_entry('article', 'A1', entries[0][2], {})
+t('a preprint that was published is reported', any('published version: doi:10.1021/real' in x for x in iss))
+cb._cr = lambda doi: None
+iss, _ = cb.check_entry('article', 'A1', entries[0][2], {})
+t('an unregistered DOI is reported', bool(iss) and 'not registered' in iss[0])
+cb._cr = saved_cr
+
+print('expand')
+from jvlib import graph  # noqa: E402
+saved = (oa.work, graph._citing_pair, oa.by_ids)
+seeds = {'a': {'openalex_id': 'W1', 'refs': ['W9', 'W8'], 'cited': 3, 'title': 'A', 'year': 2016, 'authors': ['X Alpha'], 'doi': 'a'},
+         'b': {'openalex_id': 'W2', 'refs': ['W9'], 'cited': 2, 'title': 'B', 'year': 2017, 'authors': ['Y Beta'], 'doi': 'b'},
+         'c': {'openalex_id': 'W3', 'refs': ['W9', 'W8', 'W1'], 'cited': 2, 'title': 'C', 'year': 2018, 'authors': ['Z Gamma'], 'doi': 'c'}}
+oa.work = lambda s: seeds.get(s)
+CITES = {'W5': ['W1', 'W2', 'W3'], 'W6': ['W1', 'W2'], 'W3': ['W1']}     # paper -> seeds it cites
+def fake_pair(a, b, f):
+    rows = [{'id': 'https://openalex.org/' + w, 'referenced_works': ['https://openalex.org/' + x for x in refs],
+             'counts_by_year': [{'year': 2026, 'cited_by_count': {'W5': 1, 'W6': 9}.get(w, 0)}]}
+            for w, refs in CITES.items() if a in refs and b in refs]
+    return rows, len(rows)
+graph._citing_pair = fake_pair
+oa.by_ids = lambda ids, f=(): [{'openalex_id': i, 'recent_cites': {'W5': 1, 'W6': 9}.get(i, 0)} for i in ids]
+_, (later, nl, _), (shared, ns) = graph.expand(['a', 'b', 'c'], n=10)
+t('later work: linked to 3 seeds ranks above linked to 2', [p['openalex_id'] for p in later] == ['W5', 'W6'])
+t('a seed citing another seed is not listed as a result',
+  'W3' not in [p['openalex_id'] for p in later] and 'W1' not in [p['openalex_id'] for p in shared])
+t('shared foundations counted', [p['openalex_id'] for p in shared] == ['W9', 'W8'] and ns == 2)
+oa.work, graph._citing_pair, oa.by_ids = saved
 
 print('\n=== all passed ===' if not fails else '\n=== %d FAILED ===' % fails)
 sys.exit(1 if fails else 0)

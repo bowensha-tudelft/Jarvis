@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Jarvis: literature search for research scoping and evidence checking.
 
-  find   "<query>"   papers (OpenAlex keyword + Firecrawl paper index, with S2 TLDRs)
+  find   "<query>"   papers (OpenAlex keyword + semantic search); --sort impact for current importance
   cite   <doi>       snowball: --dir citers | refs | related
   paper  <doi|title> ...   full record and abstract
   verify "<citation as remembered>"   the records that really exist (Crossref fuzzy match)
+  expand <doi> <doi> ...   papers linked to several seed papers through the citation graph
+  checkbib <file.bib>      check every entry: DOI points to the paper, year/volume/pages, preprint
+                           since published, retraction
   read   <doi|url>   full text (PMC, OpenAlex, free copies, author manuscripts); --find "terms" for passages
   web    "<query>"   web search (Tavily and/or Firecrawl)
   bib    <doi> ...   BibTeX from doi.org; --out refs.bib appends without duplicates
@@ -33,13 +36,14 @@ def build():
         p.add_argument('--author', help='author surname, e.g. Grimme (never put names in the query)')
         p.add_argument('-n', type=int, default=10, help='how many to show (default 10)')
         p.add_argument('--abstract', action='store_true', help='print abstracts (900 chars each)')
-        p.add_argument('--no-tldr', action='store_true', help='skip the Semantic Scholar TLDR lookup')
+        p.add_argument('--tldr', action='store_true', help='add Semantic Scholar TLDRs (often rate-limited)')
 
     p = sub.add_parser('find', help='find papers')
     p.add_argument('query', help='keywords; AND / OR / NOT, () and "phrases" work in keyword mode')
     p.add_argument('--mode', choices=['auto', 'keyword', 'semantic'], default='auto',
                    help='auto = keyword and semantic merged (default)')
-    p.add_argument('--sort', choices=['relevance', 'cited', 'recent'], default='relevance')
+    p.add_argument('--sort', choices=['relevance', 'cited', 'recent', 'impact'], default='relevance',
+                   help='impact = citations in the last two years, then FWCI')
     p.add_argument('--oa', action='store_true', help='open-access papers only')
     p.add_argument('--fulltext', action='store_true', help='keyword search in full texts too (noisy)')
     p.add_argument('--source', choices=sorted(['chemrxiv', 'arxiv']),
@@ -50,13 +54,28 @@ def build():
     p = sub.add_parser('cite', help='snowball from one paper')
     p.add_argument('id', help='DOI, OpenAlex id or title')
     p.add_argument('--dir', choices=['citers', 'refs', 'related'], default='citers')
-    p.add_argument('--sort', choices=['cited', 'recent'], default='cited')
+    p.add_argument('--sort', choices=['cited', 'recent', 'impact'], default='cited')
     filters(p)
     p.set_defaults(fn=commands.cite)
 
     p = sub.add_parser('paper', help='full record and abstract')
     p.add_argument('ids', nargs='+', help='DOIs, OpenAlex ids or titles')
     p.set_defaults(fn=commands.paper)
+
+    p = sub.add_parser('expand', help='papers linked to several seeds through citations')
+    p.add_argument('ids', nargs='+', help='2-8 seed DOIs (or OpenAlex ids / titles); 3-6 work best')
+    p.add_argument('--min-links', type=int, default=2)
+    p.add_argument('--years', help='limit the later-work list, e.g. 2023-')
+    p.add_argument('--type', help='OpenAlex work type')
+    p.add_argument('-n', type=int, default=25)
+    p.add_argument('--abstract', action='store_true')
+    p.add_argument('--tldr', action='store_true')
+    p.set_defaults(fn=commands.expand)
+
+    p = sub.add_parser('checkbib', help='check every entry of a .bib file')
+    p.add_argument('file')
+    p.add_argument('--problems-only', action='store_true')
+    p.set_defaults(fn=commands.checkbib)
 
     p = sub.add_parser('verify', help='check a citation as remembered against Crossref')
     p.add_argument('citation', help='whatever is remembered: authors, year, words of the title, journal')

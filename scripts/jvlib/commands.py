@@ -78,7 +78,9 @@ def find(a):
         print('Try: fewer words, a synonym or the spelled-out term, the abbreviation with and without '
               'its hyphen ("g-xTB" vs "gxTB"), author names via --author, or `verify` for a remembered citation.')
         return 1 if notes else 0
-    if not a.no_tldr:
+    if a.sort == 'impact':
+        oa.sort_impact(merged)
+    if a.tldr:
         n = s2.enrich(merged)
         if n:
             notes.append(n)
@@ -110,13 +112,15 @@ def _not_found(ident):
 
 
 def fill_abstracts(papers):
-    """OpenAlex has no abstract for most Elsevier papers; Europe PMC usually does (5 of 5 tried)."""
-    missing = [p for p in papers if p.get('doi') and not p.get('abstract')]
-    if missing:
-        got = europepmc.lookup([p['doi'] for p in missing])
-        for p in missing:
-            if got.get(p['doi'], {}).get('abstract'):
-                p['abstract'] = got[p['doi']]['abstract']
+    """OpenAlex has no abstract for most Elsevier papers, and a truncated one for some Springer,
+    Elsevier and Wiley papers; Europe PMC usually has the whole abstract (5 of 5 tried)."""
+    todo = [p for p in papers if p.get('doi') and len(p.get('abstract') or '') < 1500]
+    if todo:
+        got = europepmc.lookup([p['doi'] for p in todo])
+        for p in todo:
+            ab = got.get(p['doi'], {}).get('abstract') or ''
+            if len(ab) > 1.2 * len(p.get('abstract') or ''):
+                p['abstract'] = ab
                 p['abstract_from'] = 'Europe PMC'
 
 
@@ -133,7 +137,7 @@ def cite(a):
         print('(related = OpenAlex\'s relatedness order, not citations)')
     if not rows:
         return 0
-    note = None if a.no_tldr else s2.enrich(rows)
+    note = s2.enrich(rows) if a.tldr else None
     if note:
         print('Note: ' + note)
     print()
@@ -177,6 +181,51 @@ def paper(a):
         src = ' (from %s)' % p['abstract_from'] if p.get('abstract_from') else ''
         print('Abstract%s: %s' % (src, p['abstract'] or '(no abstract in OpenAlex or Europe PMC)'))
     return code
+
+
+def expand(a):
+    """Papers linked to several seeds through the citation graph (graph.py)."""
+    from . import graph
+    filters = oa.build_filters(a.years, a.type, False)
+    try:
+        seeds, (later, n_later, truncated), (shared, n_shared) = graph.expand(a.ids, filters, a.n, a.min_links)
+    except LookupError as e:
+        return _not_found(str(e))
+    print('expand: %d seeds (papers linked to at least %d of them)' % (len(seeds), a.min_links))
+    for i, w in enumerate(seeds):
+        print('  %s  %s (%s) doi:%s | cited by %d, references %d' % (
+            graph.LABELS[i], w['title'][:80], w['year'], w['doi'], w['cited'], len(w['refs'])))
+    if len(a.ids) > graph.MAX_SEEDS:
+        print('Note: only the first %d seeds were used.' % graph.MAX_SEEDS)
+    if truncated:
+        print('Note: a seed pair is cited together by more than 200 papers; only the 200 most cited of those were read.')
+    if a.tldr:
+        s2.enrich(later + shared)
+    for title, rows, total in (('LATER WORK citing several seeds', later, n_later),
+                               ('SHARED FOUNDATIONS cited by several seeds', shared, n_shared)):
+        print('\n== %s: %d found, showing %d (most links first, then citations in the last two years)\n' % (
+            title, total, len(rows)))
+        for i, p in enumerate(rows, 1):
+            print(fmt.paper(p, i, 900 if a.abstract else 0))
+            print('    ' + graph.link_line(p, seeds))
+    if len(seeds) < 3:
+        print('\nNote: with 2 seeds every link count is 2; 3 to 6 seeds rank far better.')
+    return 0
+
+
+def checkbib(a):
+    from . import checkbib as cb
+    rows = cb.check_file(a.file)
+    bad = [r for r in rows if r[2]]
+    print('checkbib %s: %d entries, %d with problems\n' % (a.file, len(rows), len(bad)))
+    for key, kind, issues, notes in rows:
+        if issues:
+            print('%s (@%s)' % (key, kind))
+            for x in issues:
+                print('   - ' + x)
+        elif not a.problems_only:
+            print('%s: ok%s' % (key, ' (' + '; '.join(notes) + ')' if notes else ''))
+    return 1 if bad else 0
 
 
 def verify(a):

@@ -110,6 +110,9 @@ def read(a):
             print('No readable full text for: %s' % label)
             print('OA status: %s. Use the abstract (`paper %s`), or ask the user for the PDF and read it locally.'
                   % (p['oa_status'], p['doi'] or p['openalex_id']))
+            # In testing the built-in web search found 5 of 5 public copies that this search found 3 of.
+            print('The built-in web search often finds a public copy this search misses. Try: "%s" pdf, then '
+                  '`read <url>` on a repository result.' % p['title'][:150])
             return 1
     if not got:
         notes_out(notes)

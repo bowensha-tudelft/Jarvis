@@ -19,11 +19,15 @@ from . import net
 
 BASE = 'https://api.openalex.org'
 SELECT = ('id,doi,title,publication_year,authorships,primary_location,cited_by_count,'
-          'type,open_access,best_oa_location,abstract_inverted_index,has_content')
+          'type,open_access,best_oa_location,abstract_inverted_index,has_content,fwci,is_retracted,counts_by_year')
 TTL_SEARCH = 3 * 86400
 TTL_WORK = 30 * 86400
 SORTS = {'relevance': 'relevance_score:desc', 'cited': 'cited_by_count:desc',
-         'recent': 'publication_date:desc'}
+         'recent': 'publication_date:desc',
+         # 'impact' (citations in the last two years) cannot be sorted on by OpenAlex: fetch by
+         # relevance or citations, then sort_impact() reorders.
+         'impact': 'relevance_score:desc'}
+THIS_YEAR = __import__('datetime').date.today().year
 # Data sets and "code supporting the publication" records rank high on keyword matches
 # and are never what a literature search wants.
 DEFAULT_EXCLUDE = ['type:!dataset', 'is_paratext:false']
@@ -119,6 +123,17 @@ def build_filters(years=None, type_=None, oa=False, source=None, author=None):
 def _clean_query(q):
     # A comma separates filters in OpenAlex syntax, so it must not appear inside one.
     return ' '.join(q.replace(',', ' ').split())
+
+
+def recent_cites(w):
+    """Citations received this year and last year: how much the paper is being used now. A 2025
+    paper with 60 such citations is a current reference point; a 2025 paper with 2 is just new."""
+    return sum(c.get('cited_by_count', 0) for c in w.get('counts_by_year') or [] if c.get('year', 0) >= THIS_YEAR - 1)
+
+
+def sort_impact(papers):
+    papers.sort(key=lambda p: (-(p.get('recent_cites') or 0), -(p.get('fwci') or 0)))
+    return papers
 
 
 def search(query, filters, sort='relevance', n=10, fulltext=False):
@@ -235,13 +250,29 @@ def fulltext(openalex_id):
     return tei.to_markdown(xml) or None
 
 
+def by_ids(ids, filters=()):
+    """Full records for OpenAlex ids (50 per request), in the order given."""
+    out = {}
+    for i in range(0, len(ids), 50):
+        f = ['openalex_id:' + '|'.join(ids[i:i + 50])] + list(filters)
+        d = _get('/works?filter=%s&per_page=50&select=%s' % (urllib.parse.quote(','.join(f), safe=':,|!<>-'), SELECT), TTL_WORK)
+        for w in d.get('results', []):
+            out[short_id(w['id'])] = normalize(w)
+    return [out[i] for i in ids if i in out]
+
+
 def citations(seed, direction, filters, sort='cited', n=15):
     """Snowballing from one full record (from `work`). Returns (papers, total)."""
     if direction == 'citers':
         f = ['cites:' + seed['openalex_id']] + filters
+        per = min(n * 3, 100) if sort == 'impact' else min(n, 100)
         d = _get('/works?filter=%s&per_page=%d&sort=%s&select=%s' % (
-            urllib.parse.quote(','.join(f), safe=':,|!<>-'), min(n, 100), SORTS[sort], SELECT), TTL_SEARCH)
-        return [normalize(w) for w in d.get('results', [])], d.get('meta', {}).get('count')
+            urllib.parse.quote(','.join(f), safe=':,|!<>-'), per,
+            SORTS['cited' if sort == 'impact' else sort], SELECT), TTL_SEARCH)
+        rows = [normalize(w) for w in d.get('results', [])]
+        if sort == 'impact':
+            rows = sort_impact(rows)[:n]
+        return rows, d.get('meta', {}).get('count')
     ids = seed['refs'] if direction == 'refs' else seed['related']
     if not ids:
         return [], 0
@@ -253,8 +284,11 @@ def citations(seed, direction, filters, sort='cited', n=15):
         papers += [normalize(w) for w in d.get('results', [])]
     if direction == 'refs':
         # Most-cited references first: the foundational papers come out on top.
-        key = (lambda p: p['year'] or 0) if sort == 'recent' else (lambda p: p['cited'])
-        papers.sort(key=key, reverse=True)
+        if sort == 'impact':
+            sort_impact(papers)
+        else:
+            key = (lambda p: p['year'] or 0) if sort == 'recent' else (lambda p: p['cited'])
+            papers.sort(key=key, reverse=True)
     else:
         # Keep OpenAlex's relatedness order; sorting by citations would swap "related" for "famous".
         order = {x: i for i, x in enumerate(ids)}
@@ -296,5 +330,8 @@ def normalize(w):
         'oa_status': oa.get('oa_status') or 'closed',
         'abstract': abstract_text(w.get('abstract_inverted_index')),
         'has_text': bool((w.get('has_content') or {}).get('grobid_xml')),
+        'fwci': w.get('fwci'),
+        'recent_cites': recent_cites(w),
+        'retracted': bool(w.get('is_retracted')),
         'oa_urls': [u for u in (best.get('pdf_url'), best.get('landing_page_url'), oa.get('oa_url')) if u],
     }
