@@ -23,8 +23,11 @@ VERSION_NOTE = {
     'submittedVersion': 'PREPRINT (submitted version, not peer-reviewed): wording and numbers may differ from the '
                         'published paper. Say so when quoting it',
     'pmc': 'PubMed Central copy (published version or the accepted author manuscript)',
-    'manuscript': 'AUTHOR MANUSCRIPT found by web search: usually the accepted version. Check numbers you quote '
-                  'against the published paper if you can, and say it was the manuscript',
+    # Not always a manuscript: two NSF PAR files read in testing carried the publisher's layout
+    # ("Cite This", "Published:"), i.e. the published version itself.
+    'manuscript': 'COPY FROM A PUBLIC REPOSITORY found by web search: either the accepted manuscript or the '
+                  "publisher's version (look for the journal header, \"Cite This\" or \"Published:\" at the top). "
+                  'Say which it is when quoting it',
 }
 
 

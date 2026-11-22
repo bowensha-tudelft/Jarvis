@@ -133,3 +133,20 @@ Each verb has one core source; the others enrich it or stand in when it fails.
   tools in this user's context already), and combining them would be left to the model each time.
 - **Firecrawl passage reads for paywalled papers**: empty for 0/3 paywalled chemistry papers (AI en Man).
 - **Firecrawl `checkPromptInjection`**: rejected by `/v2/scrape` as an unknown key (AI en Man).
+
+## Retrieval evaluation (2026-11-22)
+
+Same model, three retrieval tasks in one research area. One group had the built-in web search plus
+Jarvis, the other the built-in web search only. Transcripts were audited: no local files were read.
+
+| | Web search + Jarvis | Web search only |
+|---|---|---|
+| Verify 10 references (5 errors, 1 fabricated, 1 online/print-year trap), score /16 | **16** | 14: missed a DOI that resolves to an unrelated paper, then reused that DOI in its own list |
+| 5 questions answerable only from full texts, score /10 | **10** | 8: a ChemRxiv preprint could not be fetched (403); Jarvis read it from OpenAlex's cached copy |
+| 40 most important papers: mean relevance (0–2), top 10 | 1.625, 2.0 | 1.625, 2.0 |
+| Blind reviewer's preference for the list | narrowly preferred: all DOIs right | 2 DOIs pointed at the wrong paper |
+| Time, tokens, tool calls | 20 min, 270k, 58 | 20 min, 319k, 136 |
+
+Both lists were weak on the same sub-topic (polymer swelling and water uptake) and missed the same
+recent papers, so for open-ended discovery the gain from Jarvis is small. The gain is in checking:
+a DOI looked up in the registry exposes errors that a page with the right title and authors hides.
