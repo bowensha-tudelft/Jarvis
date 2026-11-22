@@ -53,12 +53,39 @@ Each verb has one core source; the others enrich it or stand in when it fails.
 - **Free copies**: of 50 open-access PFAS papers, 17 had more than one free copy and 30 had a
   repository copy. `locations[].version` says which: published, accepted or submitted (preprint).
 
+## Europe PMC
+
+- `search?query=DOI:"..."&resultType=core` returns the abstract, the PMCID and whether the full text is in
+  PMC. Abstracts found for 5/5 papers tried, 4 of them Elsevier or Nature papers with no abstract in
+  OpenAlex (Water Research 2014 and 2020, Environ. Sci. Technol. 2020, Nature 2016).
+- `/{PMCID}/fullTextXML` is JATS, free and unmetered; author manuscripts in PMC are included (a Science
+  paper as PMC8902460). Parsed to Markdown with section headings; the reference list is dropped.
+
+## Author manuscripts (web search fallback in `read`)
+
+- A writer restricted to web search read 10 papers from public PDFs, mostly NSF PAR accepted
+  manuscripts (par.nsf.gov/servlets/purl/N). OpenAlex listed 8 of those 10 as closed with no copy.
+- Tavily with `include_domains=[par.nsf.gov, osti.gov]` returns those PDF links directly; Firecrawl
+  `site:` searches returned unrelated OSTI record pages. Record pages `/biblio/N` map to `/servlets/purl/N`.
+- **A title check by word overlap accepted the wrong paper**: a 2020 Water Research manuscript whose
+  introduction discusses Alsbaiee 2016 contained every word of that title. The check now needs the title as
+  one contiguous phrase in the first 2,500 characters, and the text must name at least three section
+  types (introduction, methods, results, references...), which also rejects PubMed abstract pages (one
+  was accepted as a "manuscript" before PubMed was removed from the allow list).
+- Result on 5 papers OpenAlex marks closed: 3 found (ES&T 2020, ACS Mater. Lett. 2022, Water Res. 2020),
+  2 not (Nature 2016, Acc. Chem. Res. 2020). Not finding one is reported as such, never filled with another.
+- Only public repositories are accepted: funder archives, PMC, university and institutional repositories,
+  preprint servers. Shadow libraries, ResearchGate and Academia.edu are refused.
+
 ## Crossref
 
 - `query.bibliographic` matches loosely over authors, title, venue and year. "Dichtel 2017 Nature
   beta-cyclodextrin polymer PFOA" (the paper is in JACS): OpenAlex found 0, Crossref ranked the JACS
   paper first once its supporting-information DOI (`10.1021/jacs.7b02381.s001`, type `component`) was
   filtered out. "Grimme 2025 g-xTB general purpose extended tight-binding": the ChemRxiv preprint first.
+- `published-print` (or `journal-issue.published-print`) gives the printed issue's year. OpenAlex's
+  `publication_year` is the first online date: Alsbaiee et al., Nature 529 (January 2016) shows as 2015,
+  and a reference list built from it paired volume 529 with 2015. `bib` and `paper` use the issue year.
 - Free, no key, no daily budget. No arXiv (DataCite DOIs), abstracts only for some publishers, and
   `is-referenced-by-count` is Crossref's own count, lower than OpenAlex's (56 vs 100 for g-xTB).
 

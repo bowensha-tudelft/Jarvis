@@ -5,7 +5,7 @@
   cite   <doi>       snowball: --dir citers | refs | related
   paper  <doi|title> ...   full record and abstract
   verify "<citation as remembered>"   the records that really exist (Crossref fuzzy match)
-  read   <doi|url>   open-access full text (OpenAlex, else Firecrawl); --find "terms" for passages
+  read   <doi|url>   full text (PMC, OpenAlex, free copies, author manuscripts); --find "terms" for passages
   web    "<query>"   web search (Tavily and/or Firecrawl)
   bib    <doi> ...   BibTeX from doi.org; --out refs.bib appends without duplicates
   status [--check]   which keys are set; --check pings each source
@@ -68,7 +68,8 @@ def build():
     p.add_argument('--find', action='append', help='terms to locate; repeat or separate with ";"')
     p.add_argument('-k', type=int, default=8, help='passages to show with --find (default 8)')
     p.add_argument('--max', type=int, default=12000, help='characters to print without --find')
-    p.add_argument('--web', action='store_true', help='skip OpenAlex full text, read the web copies')
+    p.add_argument('--web', action='store_true', help='skip PMC and OpenAlex full texts, read the web copies')
+    p.add_argument('--no-search', action='store_true', help='do not search the web for an author manuscript')
     p.set_defaults(fn=reading.read)
 
     p = sub.add_parser('web', help='web search')

@@ -19,11 +19,11 @@ python "$HOME/.claude/skills/jarvis/scripts/jarvis.py" <command> ...
 |---|---|
 | `find "<query>"` | Papers. Runs OpenAlex keyword search (title + abstract) **and** semantic search (Firecrawl's paper index plus OpenAlex semantic), merges by DOI, adds Semantic Scholar's one-line TLDR and influential-citation count. Papers found by more than one search come first. Index hits whose full text is in PubMed Central carry the **matching passage**. `OA ..., full text` means `read` can get the text cheaply. If OpenAlex's daily budget is gone, Crossref answers instead (marked `from Crossref`) |
 | `cite <doi>` | Snowballing. `--dir citers` (default, who cites it), `refs` (what it cites, most-cited first = foundations), `related` |
-| `paper <doi\|title> ...` | Full record with abstract, every free copy, topics. Several at once is one call. No OpenAlex match shows Crossref's closest records |
-| `verify "<citation as remembered>"` | For a half-remembered or doubtful reference ("Dichtel 2017 Nature cyclodextrin PFOA"): Crossref's fuzzy match over authors, title, venue and year, with OpenAlex details. Lists the records that really exist, best first |
-| `read <doi\|url> --find "a; b"` | The open-access full text, with only the paragraphs containing the terms, their section and position. Tries OpenAlex's own copy first (about $0.01 from the daily $1, cached), then every free copy through Firecrawl, published version first. **Prints which version it read**; a preprint is flagged. Without `--find` it prints the start. The text is saved to `~/.jarvis/texts/` for Grep/Read later. `--web` skips OpenAlex's copy |
+| `paper <doi\|title> ...` | Full record with abstract (from Europe PMC when OpenAlex has none, as for most Elsevier papers), every free copy, topics, and the year of the printed issue ("2016 (online 2015)"). Several at once is one call. No OpenAlex match shows Crossref's closest records |
+| `verify "<citation as remembered>"` | For a half-remembered or doubtful reference ("Grimme 2024 Nature g-xTB tight binding": it is a 2025 ChemRxiv preprint): Crossref's fuzzy match over authors, title, venue and year, with OpenAlex details. Lists the records that really exist, best first |
+| `read <doi\|url> --find "a; b"` | The full text, with only the paragraphs containing the terms, their section and position. Tries PubMed Central (free), OpenAlex's copy (about $0.01, cached), every free copy, and finally a web search for a public **author manuscript** (NSF PAR, OSTI, university repositories). **Run it even when a paper shows `OA closed`**: in testing it found manuscripts for 3 of 5 such papers. **It prints which version it read** (published, accepted, preprint, author manuscript). Without `--find` it prints the start. The text is saved to `~/.jarvis/texts/`. `--web` skips PMC and OpenAlex; `--no-search` skips the manuscript search (it costs a few Firecrawl credits) |
 | `web "<query>"` | Web search, Tavily and Firecrawl merged. `--domains echa.europa.eu,epa.gov` to restrict. For reports, regulations, standards, datasets, news |
-| `bib <doi> ... --out refs.bib` | BibTeX from doi.org, readable keys, appended without duplicates |
+| `bib <doi> ... --out refs.bib` | BibTeX from doi.org with the printed issue's year, readable keys, appended without duplicates. Take years, volumes and pages for a reference list from here, not from `find`, whose year is the first online date |
 | `status --check` | Which keys are set; pings each source (see "API keys" below) |
 
 Common options: `--years 2020-2025` (or `2022-`, `-2015`), `--type review|article|preprint`, `--author Grimme`, `--source chemrxiv|arxiv`, `--sort relevance|cited|recent`, `-n 20`, `--abstract`, `--oa`, `--mode keyword|semantic`, `--fresh` (skip cache). Keyword queries take `AND`, `OR`, `NOT`, `()` and `"phrases"`. More query syntax: `references/openalex-query.md`.
@@ -64,7 +64,7 @@ When reporting to the user, give per source: works or not, and what is left. Nev
 4. Pick 3–5 anchor papers (highly cited, or a recent review). From each: `cite --dir refs` for the foundations, `cite --dir citers --sort recent` for the frontier.
 5. `find ... --sort recent --years <this year - 1>-` for the newest work.
 6. `web` only if regulation, industry, standards or data sources matter for the topic.
-7. `paper` on the shortlist (many DOIs in one call) to read abstracts before characterising any paper.
+7. `paper` on the shortlist (many DOIs in one call) to screen it by abstract. Then `read` every paper whose specific findings you will describe (see "Reading depth" below).
 8. Stop when new searches mostly return papers already seen. A scoping run is usually 10–25 commands.
 
 Deliverable, unless the user asks for something else: write `research/<topic-slug>/report.md` in the current working directory, plus `research/<topic-slug>/refs.bib` via `bib --out`. Report sections:
@@ -81,6 +81,40 @@ Deliverable, unless the user asks for something else: write `research/<topic-slu
 3. For promising open-access papers: `read <doi> --find "<key terms>"` to get the exact sentence. Closed access: the abstract is what you have; say so.
 4. If the support is a review restating someone else's result, trace it to the primary source with `cite <review> --dir refs` or `find`, and cite the original.
 5. Answer with: a verdict (supported / partly / contradicted / not found), then each piece of evidence as **verbatim quote, where it came from (full text section / abstract / index passage), author–year, DOI**, and how direct it is (primary measurement vs. citing others). Offer BibTeX; append to the user's `.bib` if they name one.
+
+## Workflow C — writing an introduction, a review section or a thesis chapter
+
+This is where the depth of reading shows. In a blind comparison of three introductions written from
+the same outline, the one ranked lowest cited only real papers, but it read 8 of the 20 full texts
+it could have read, and some of its statements went beyond its sources. It also declared a research
+gap that existing papers had partly filled. The one ranked highest read 21 full texts.
+
+1. Work to the requested length from the start. Drafting 15–20% over and cutting cost the slowest
+   writer twice the time for no gain in quality.
+2. For each part of the outline: `find` (2–3 query variants), screen with `paper`, then `read` the
+   papers the text will lean on (see "Reading depth").
+3. **Before you state a research gap, or that something is "first" or "lacking", try to prove
+   yourself wrong.** Search again one level more general, without the application-specific words:
+   for "no simulation of ionic liquid X confined in MOF Y for CO2 capture", also search "molecular
+   simulation ionic liquid metal-organic framework" and "MOF Y atomistic model". Work on the same
+   material class for another purpose, or on a close relative of the material, usually exists. It
+   either narrows the gap's wording or removes the gap. Keep the hedge ("to our knowledge",
+   "据我们检索所及") as well.
+4. For a methods-heavy paper, cover every component of the user's system that the method has to
+   describe. For example, force fields or parameters for each distinct chemical component, not only
+   the best-known one.
+5. Build the reference list from `bib` output, so years, volumes and pages are the published ones.
+
+## Reading depth
+
+- **Abstract is enough** for background statements that restate what a paper is about ("X was used
+  for Y").
+- **Read the full text** (`read --find`) before stating a paper's specific findings: numbers, the
+  direction of an effect, a mechanism, a comparison, a limitation. Also read it for the closest prior
+  work, for papers by the user's own group, and for any paper whose abstract and conclusion might
+  differ. In testing, a writer summarised a paper from its abstract as showing that its method
+  captured an effect; the full text reported that the method got that effect's direction wrong.
+- If `read` finds nothing, say the statement rests on the abstract, and keep it to what the abstract says.
 
 ## Rules
 

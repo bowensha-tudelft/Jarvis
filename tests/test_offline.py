@@ -126,5 +126,37 @@ t('the 429 is still reported', 'daily budget used up' in out)
 oa.search, crossref.search, s2.enrich = saved
 t('Crossref drops supporting-information DOIs', not crossref._keep({'DOI': '10.1021/jacs.7b02381.s001', 'type': 'component'}))
 
+print('author manuscripts')
+from jvlib import manuscripts as ms  # noqa: E402
+t('NSF PAR, OSTI, PMC, university sites allowed',
+  all(ms.allowed(u) for u in ('https://par.nsf.gov/servlets/purl/10205501', 'https://www.osti.gov/servlets/purl/1',
+                              'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/', 'https://repository.tudelft.nl/x.pdf',
+                              'https://dash.harvard.edu/a.pdf', 'https://eprints.whiterose.ac.uk/1/')))
+t('shadow libraries, ResearchGate and PubMed abstract pages refused',
+  not any(ms.allowed(u) for u in ('https://sci-hub.se/10.1038/x', 'https://www.researchgate.net/publication/1',
+                                  'https://pubmed.ncbi.nlm.nih.gov/26689365/', 'https://academia.edu/1')))
+title = 'Rapid removal of organic micropollutants from water by a porous beta-cyclodextrin polymer'
+other = ('Evaluating the effects of water matrix constituents on micropollutant removal. Introduction. '
+         'Porous polymer adsorbents enable rapid removal of organic micropollutants from water [1]; '
+         'beta-cyclodextrin polymer networks are porous ...')
+t('a paper that only discusses the title words is rejected', not ms.matches(other, title))
+t('the paper itself, title at the top, is accepted', ms.matches('# ' + title + '\n\nAuthors ...', title))
+t('an abstract page does not look like a full text', not ms.looks_full('Abstract. We report ... Keywords: x'))
+
+print('PMC JATS')
+from jvlib import europepmc  # noqa: E402
+jats = ('<!DOCTYPE article PUBLIC "x" "y"><article><front><article-meta><title-group><article-title>T</article-title>'
+        '</title-group><abstract><p>Abs.</p></abstract></article-meta></front><body><sec><title>Introduction</title>'
+        '<p>Intro text.</p><sec><title>Sub</title><p>Deep.</p></sec></sec><sec><p>No title here.</p></sec></body>'
+        '<back><ref-list><ref>R1</ref></ref-list></back></article>')
+jm = europepmc.jats_to_markdown(jats)
+t('JATS: title, abstract, nested sections', jm.startswith('# T') and '## Introduction' in jm and '### Sub' in jm)
+t('JATS: untitled section labelled, references dropped', '(section without a heading)' in jm and 'R1' not in jm)
+
+print('issue year')
+art = bib.tidy('@article{A_2015, title={Rapid removal}, journal={Nature}, volume={529}, author={Alsbaiee, A.}, '
+               'year={2015}}', '10.1038/nature16185', 2016)
+t('printed issue year replaces the online year, key included', 'year = {2016}' in art and art.startswith('@article{Alsbaiee2016'))
+
 print('\n=== all passed ===' if not fails else '\n=== %d FAILED ===' % fails)
 sys.exit(1 if fails else 0)

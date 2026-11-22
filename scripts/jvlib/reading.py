@@ -1,14 +1,18 @@
 """`read`: the full text of a paper, from the cheapest reliable source that has it.
 
-Order: OpenAlex's own parse of the PDF ($0.01, 0.5 s, sections already split, no publisher
-blocking), then every free copy OpenAlex knows, published version first, through Firecrawl
-(1 credit each). Which version was read is always printed: a preprint's wording and numbers
-can differ from the published paper, and the user may quote it in a manuscript.
+Order, cheapest and most reliable first:
+1. PubMed Central via Europe PMC: free, no budget, sections already split (JATS).
+2. OpenAlex's own parse of the PDF: $0.01, 0.5 s, sections split.
+3. Every free copy OpenAlex knows, published version first, through Firecrawl (1 credit each).
+4. A public author manuscript found by web search (manuscripts.py): NSF PAR, OSTI, university
+   repositories. OpenAlex listed 8 of 10 such manuscripts as "closed, no free copy".
+Which version was read is always printed: a preprint's or manuscript's wording and numbers can
+differ from the published paper, and the user may quote it in a manuscript of their own.
 """
 import os
 import re
 
-from . import fmt, net, s2, web
+from . import europepmc, fmt, manuscripts, net, s2, web
 from . import openalex as oa
 from .commands import _not_found, notes_out
 
@@ -18,6 +22,9 @@ VERSION_NOTE = {
     'acceptedVersion': 'accepted manuscript (peer-reviewed, before copy-editing: page layout and small edits may differ)',
     'submittedVersion': 'PREPRINT (submitted version, not peer-reviewed): wording and numbers may differ from the '
                         'published paper. Say so when quoting it',
+    'pmc': 'PubMed Central copy (published version or the accepted author manuscript)',
+    'manuscript': 'AUTHOR MANUSCRIPT found by web search: usually the accepted version. Check numbers you quote '
+                  'against the published paper if you can, and say it was the manuscript',
 }
 
 
@@ -25,8 +32,19 @@ def _slug(s):
     return re.sub(r'[^A-Za-z0-9._-]+', '_', s)[:120]
 
 
-def _version_note(v):
-    return VERSION_NOTE.get(v, 'version unknown')
+def _long_enough(md):
+    return md and len(md) >= 1500
+
+
+def _from_pmc(p, notes):
+    info = europepmc.lookup([p['doi']]).get(p['doi']) if p.get('doi') else None
+    if not info or not info['pmcid'] or not info['in_pmc']:
+        return None
+    md = europepmc.fulltext(info['pmcid'])
+    if _long_enough(md):
+        return md, 'PubMed Central %s (via Europe PMC)' % info['pmcid'], 'pmc'
+    notes.append('PMC %s gave no usable full text' % info['pmcid'])
+    return None
 
 
 def _from_openalex(p, notes):
@@ -37,31 +55,32 @@ def _from_openalex(p, notes):
     except net.SourceError as e:
         notes.append('OpenAlex full text failed (%s)' % e)
         return None
-    if md and len(md) >= 1500:
-        return md
-    notes.append('OpenAlex full text too short (%d characters), trying the web copies' % len(md or ''))
+    if _long_enough(md):
+        best = p['copies'][0] if p['copies'] else {'version': 'unknown', 'source': ''}
+        return md, 'OpenAlex full text (its parse of the %s%s)' % (
+            best['version'], ', ' + best['source'] if best['source'] else ''), best['version']
+    notes.append('OpenAlex full text too short (%d characters)' % len(md or ''))
     return None
 
 
-def _from_web(copies, notes):
+def _from_copies(copies, notes):
     for c in copies:
         try:
             md, _ = web.scrape(c['url'])
         except net.SourceError as e:
             notes.append('%s -> %s' % (c['url'], e))
             continue
-        if len(md) >= 1500:
-            return md, c
+        if _long_enough(md):
+            return md, c['url'], c['version']
         notes.append('%s -> only %d characters' % (c['url'], len(md)))
-    return None, None
+    return None
 
 
 def read(a):
     target = a.target.strip()
     notes = []
-    p = None
     if re.match(r'^https?://', target) and 'doi.org/' not in target:
-        copies = [{'url': target, 'version': 'unknown', 'source': ''}]
+        got = _from_copies([{'url': target, 'version': 'unknown', 'source': ''}], notes)
         label, slug = target, _slug(re.sub(r'^https?://', '', target))
     else:
         p = oa.work(target)
@@ -75,24 +94,25 @@ def read(a):
         copies += [{'url': u, 'version': 'unknown', 'source': 'Semantic Scholar'} for u in p['oa_urls'] if u not in known]
         label = '%s (%s) doi:%s' % (p['title'], p['year'], p['doi'])
         slug = _slug(p['doi'] or p['openalex_id'])
-        if not copies and not p['has_text']:
-            print('No open-access copy is known for: %s' % label)
+        got = None
+        if not a.web:
+            got = _from_pmc(p, notes) or _from_openalex(p, notes)
+        got = got or _from_copies(copies, notes)
+        if not got and not a.no_search:
+            md, url = manuscripts.find(p['title'], notes)
+            if md:
+                got = md, url, 'manuscript'
+        if not got:
+            notes_out(notes)
+            print('No readable full text for: %s' % label)
             print('OA status: %s. Use the abstract (`paper %s`), or ask the user for the PDF and read it locally.'
                   % (p['oa_status'], p['doi'] or p['openalex_id']))
             return 1
-
-    md = None if a.web or not p else _from_openalex(p, notes)
-    if md:
-        best = p['copies'][0] if p['copies'] else {'version': 'unknown', 'source': ''}
-        used = 'OpenAlex full text (its parse of the %s%s)' % (best['version'], ', ' + best['source'] if best['source'] else '')
-        version = best['version']
-    else:
-        md, c = _from_web(copies, notes)
-        if not md:
-            notes_out(notes)
-            print('Could not read a full text for: %s' % label)
-            return 1
-        used, version = c['url'], c['version']
+    if not got:
+        notes_out(notes)
+        print('Could not read: %s' % label)
+        return 1
+    md, used, version = got
 
     os.makedirs(TEXTS_DIR, exist_ok=True)
     path = os.path.join(TEXTS_DIR, slug + '.md')
@@ -100,7 +120,7 @@ def read(a):
         f.write('<!-- source: %s | version: %s -->\n%s\n' % (used, version, md))
     print('read: %s' % label)
     print('Source: %s | %d characters | saved to %s' % (used, len(md), path))
-    print('Version: ' + _version_note(version))
+    print('Version: ' + VERSION_NOTE.get(version, 'version unknown'))
     if not re.search(r'(?im)^#+\s*.*(introduction|conclusion|results|discussion|methods|experimental)', md):
         print('Warning: no Introduction/Results/Conclusion heading found. This may be a landing page '
               'or abstract only, not the full text.')

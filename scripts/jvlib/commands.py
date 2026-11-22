@@ -3,7 +3,7 @@
 One source failing never sinks a command that has other sources: the failure becomes a
 `Note:` line and the rest is printed. Only when nothing at all came back is the exit code 1.
 """
-from . import crossref, fmt, net, s2, web
+from . import crossref, europepmc, fmt, net, s2, web
 from . import openalex as oa
 
 NEXT = ('Next: `paper <doi>` for the abstract, `cite <doi>` to snowball, '
@@ -82,6 +82,8 @@ def find(a):
         n = s2.enrich(merged)
         if n:
             notes.append(n)
+    if a.abstract:
+        fill_abstracts(merged)
     flt = ', '.join(x for x in (a.author and 'author=' + oa.surname_only(a.author), a.source and 'source=' + a.source) if x)
     print('find "%s"%s | %s | showing %d, sort=%s%s' % (
         a.query, ' [%s]' % flt if flt else '', '; '.join(parts), len(merged), a.sort,
@@ -107,6 +109,17 @@ def _not_found(ident):
     return 1
 
 
+def fill_abstracts(papers):
+    """OpenAlex has no abstract for most Elsevier papers; Europe PMC usually does (5 of 5 tried)."""
+    missing = [p for p in papers if p.get('doi') and not p.get('abstract')]
+    if missing:
+        got = europepmc.lookup([p['doi'] for p in missing])
+        for p in missing:
+            if got.get(p['doi'], {}).get('abstract'):
+                p['abstract'] = got[p['doi']]['abstract']
+                p['abstract_from'] = 'Europe PMC'
+
+
 def cite(a):
     seed = oa.work(a.id)
     if not seed:
@@ -124,6 +137,8 @@ def cite(a):
     if note:
         print('Note: ' + note)
     print()
+    if a.abstract:
+        fill_abstracts(rows)
     print(fmt.papers(rows, 900 if a.abstract else 0))
     return 0
 
@@ -138,11 +153,14 @@ def paper(a):
             code = _not_found(ident)
             continue
         note = s2.enrich([p])
+        fill_abstracts([p])
+        issue = crossref.print_year(p['doi']) if p['doi'] else None
+        year = '%s (online %s)' % (issue, p['year']) if issue and issue != p['year'] else str(p['year'])
         print(p['title'])
         names = p['authors']
         print('Authors: ' + ', '.join(names[:12]) + (' ... (%d authors)' % len(names) if len(names) > 12 else ''))
         bib_ = ', '.join('%s %s' % (k, v) for k, v in p.get('biblio', {}).items())
-        print('Venue: %s, %s%s | type: %s' % (p['venue'] or '?', p['year'], (' | ' + bib_) if bib_ else '', p['type']))
+        print('Venue: %s, %s%s | type: %s' % (p['venue'] or '?', year, (' | ' + bib_) if bib_ else '', p['type']))
         print('doi:%s | openalex:%s' % (p['doi'] or '-', p['openalex_id']))
         infl = ' (influential %s)' % p['influential'] if p.get('influential') is not None else ''
         print('Cited by %d%s | references %d | topics: %s' % (p['cited'], infl, len(p['refs']), '; '.join(p['topics']) or '-'))
@@ -156,7 +174,8 @@ def paper(a):
             print('Note: ' + note)
         if p.get('tldr'):
             print('TLDR: ' + p['tldr'])
-        print('Abstract: ' + (p['abstract'] or '(OpenAlex has no abstract for this paper)'))
+        src = ' (from %s)' % p['abstract_from'] if p.get('abstract_from') else ''
+        print('Abstract%s: %s' % (src, p['abstract'] or '(no abstract in OpenAlex or Europe PMC)'))
     return code
 
 

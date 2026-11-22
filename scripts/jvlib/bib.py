@@ -22,20 +22,23 @@ def fetch(doi):
     text = text.strip()
     if not text.startswith('@'):
         raise net.SourceError('doi.org', 200, 'no BibTeX for ' + doi)
-    return tidy(text, doi)
+    from .crossref import print_year
+    return tidy(text, doi, print_year(doi))
 
 
 def _ascii(s):
     return unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
 
 
-def tidy(text, doi):
+def tidy(text, doi, issue_year=None):
     """One field per line, and a readable key: Surname2021FirstWord."""
     m = re.match(r'@(\w+)\{([^,]*),\s*(.*)\}\s*$', text, flags=re.S)
     if not m:
         return text
     kind, _, body = m.groups()
     fields = _split_fields(body)
+    if issue_year and fields.get('year') and str(issue_year) != fields['year'].strip():
+        fields['year'] = str(issue_year)     # cite the printed issue's year, as journals do
     author = fields.get('author', '')
     surname = re.sub(r'[^A-Za-z]', '', _ascii(author.split(' and ')[0].split(',')[0])) or 'Anon'
     year = re.sub(r'\D', '', fields.get('year', '')) or 'nd'

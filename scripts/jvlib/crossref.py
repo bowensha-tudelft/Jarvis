@@ -48,6 +48,24 @@ def _get(params, n):
     return [_norm(it) for it in (d.get('message') or {}).get('items') or [] if _keep(it)][:n]
 
 
+def print_year(doi):
+    """Year of the printed issue, or None. OpenAlex's publication_year is the first online date:
+    Alsbaiee et al., Nature 529 (January 2016 issue) came out as 2015, and a reference list built
+    from it paired volume 529 with 2015. Journals cite the issue year."""
+    try:
+        it = net.request('crossref', URL + '/' + urllib.parse.quote(doi, safe='/'), ttl=30 * 86400, retries=1)['message']
+    except (net.SourceError, KeyError, TypeError):
+        return None
+    for k in ('published-print', 'journal-issue'):
+        src = it.get(k) or {}
+        if k == 'journal-issue':
+            src = src.get('published-print') or {}
+        dp = (src.get('date-parts') or [[None]])[0][0]
+        if dp:
+            return int(dp)
+    return None
+
+
 def match(citation, n=5):
     """Free-text citation ('Grimme 2025 g-xTB ChemRxiv') -> best candidates, best first."""
     return _get({'query.bibliographic': citation}, n)
