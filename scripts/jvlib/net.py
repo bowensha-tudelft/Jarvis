@@ -27,6 +27,7 @@ KEY_NAMES = {
 
 _config = None
 FRESH = False          # set by --fresh: skip cache reads (writes still happen)
+LAST_CACHED = False    # whether the last request() was answered from the cache (nothing billed)
 
 
 class SourceError(Exception):
@@ -92,9 +93,11 @@ def request(source, url, *, method='GET', body=None, headers=None, ttl=0,
     `retries` applies to 429 and 5xx only, with 2/4/8 s back-off. OpenAlex passes 0:
     its 429 means the daily budget is gone, and retrying only burns more of it.
     """
+    global LAST_CACHED
     data = json.dumps(body).encode('utf-8') if body is not None else None
     sig = hashlib.sha256(('%s %s %s %s' % (method, url, data and data.decode('utf-8'), raw)).encode('utf-8')).hexdigest()
     hit = _cache_get(sig, ttl)
+    LAST_CACHED = hit is not None
     if hit is not None:
         return hit['v']
 

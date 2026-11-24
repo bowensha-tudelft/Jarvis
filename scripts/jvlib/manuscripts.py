@@ -72,13 +72,16 @@ def find(title, notes, tries=6):
     # Tavily restricted to the archives returns their PDF links directly (par.nsf.gov/servlets/purl/N);
     # Firecrawl's `site:` search mostly returned unrelated OSTI record pages. Wrong papers in the
     # candidates are harmless: matches() rejects any text whose title is not this paper's.
+    # Firecrawl search costs credits, Tavily's own quota is separate: Firecrawl runs only when Tavily
+    # found no candidate on an accepted site.
     searches = []
     if net.key('tavily'):
         searches.append(lambda: web.tavily_search(t, 8, ARCHIVES)[1])
-    searches += [lambda: web.firecrawl_search('"%s" pdf' % t, 8)]
-    if net.key('tavily'):
         searches.append(lambda: web.tavily_search('"%s" pdf' % t, 8)[1])
-    for search in searches:
+    searches.append(lambda: web.firecrawl_search('"%s" pdf' % t, 8))
+    for k, search in enumerate(searches):
+        if k == len(searches) - 1 and any(allowed(u) for u, _ in cands):
+            break
         try:
             cands += [(r['url'], r.get('title') or '') for r in search() if r.get('url')]
         except net.SourceError as e:
@@ -97,13 +100,20 @@ def find(title, notes, tries=6):
     if not urls:
         notes.append('no public manuscript found by web search (only repositories, archives and university sites are accepted)')
         return None, None
+    # First page only (1 credit) to check the title; the whole PDF only for the right paper. Scraping
+    # every candidate whole cost 10-30 credits per wrong PDF.
     for u in urls[:tries]:
         try:
-            md, _ = web.scrape(u)
+            md, _, n, total = web.scrape(u, max_pages=1, meta=True)
+            if not matches(md, title):
+                notes.append('%s -> not this paper' % u)
+                continue
+            if total and n and total > n:
+                md, _ = web.scrape(u)
         except net.SourceError as e:
             notes.append('%s -> %s' % (u, e))
             continue
-        if len(md) >= 3000 and matches(md, title) and looks_full(md):
+        if len(md) >= 3000 and looks_full(md):
             return md, u
-        notes.append('%s -> not this paper, or not a full text' % u)
+        notes.append('%s -> not a full text' % u)
     return None, None

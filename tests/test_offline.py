@@ -207,5 +207,32 @@ t('a seed citing another seed is not listed as a result',
 t('shared foundations counted', [p['openalex_id'] for p in shared] == ['W9', 'W8'] and ns == 2)
 oa.work, graph._citing_pair, oa.by_ids = saved
 
+print('Firecrawl credits in the manuscript search')
+from jvlib import web  # noqa: E402
+TITLE = 'Rapid removal of organic micropollutants from water by a porous beta-cyclodextrin polymer'
+BODY = TITLE + '\n' + ' '.join(['Introduction text. Results text. Discussion text. Conclusions. References.'] * 60)
+calls, fc_searches = [], []
+def fake_scrape(url, max_pages=web.MAX_PDF_PAGES, meta=False):
+    calls.append((url, max_pages))
+    md = ('Some other paper entirely\n' + 'x ' * 2000) if 'wrong' in url else BODY
+    md = md[:3000] if max_pages == 1 else md
+    out = (md, '', min(max_pages, 12), 12)
+    return out if meta else out[:2]
+saved = (web.scrape, web.tavily_search, web.firecrawl_search, net.key)
+web.scrape = fake_scrape
+net.key = lambda s: 'k'
+web.tavily_search = lambda q, n, domains=None, depth='basic': ('', [
+    {'url': 'https://par.nsf.gov/servlets/purl/1-wrong', 'title': TITLE},   # same title in the hit, wrong PDF
+    {'url': 'https://par.nsf.gov/servlets/purl/2', 'title': TITLE}] if domains else [])
+web.firecrawl_search = lambda q, n=5: fc_searches.append(q) or []
+md, url = ms.find(TITLE, [])
+for u, mp in calls:
+    print('      scrape', u, 'maxPages', mp)
+t('right paper found', url == 'https://par.nsf.gov/servlets/purl/2' and md == BODY)
+t('only the right paper is scraped whole', [c for c in calls if c[1] != 1] == [('https://par.nsf.gov/servlets/purl/2', web.MAX_PDF_PAGES)])
+t('the wrong PDF costs one page', [c for c in calls if 'wrong' in c[0]] == [('https://par.nsf.gov/servlets/purl/1-wrong', 1)])
+t('no Firecrawl search when Tavily found candidates', fc_searches == [])
+web.scrape, web.tavily_search, web.firecrawl_search, net.key = saved
+
 print('\n=== all passed ===' if not fails else '\n=== %d FAILED ===' % fails)
 sys.exit(1 if fails else 0)

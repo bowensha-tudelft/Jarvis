@@ -3,7 +3,8 @@
 Order, cheapest and most reliable first:
 1. PubMed Central via Europe PMC: free, no budget, sections already split (JATS).
 2. OpenAlex's own parse of the PDF: $0.01, 0.5 s, sections split.
-3. Every free copy OpenAlex knows, published version first, through Firecrawl (1 credit each).
+3. Every free copy OpenAlex knows, published version first, through Firecrawl (1 credit for an
+   HTML page, 1 per page for a PDF, capped at web.MAX_PDF_PAGES).
 4. A public author manuscript found by web search (manuscripts.py): NSF PAR, OSTI, university
    repositories. OpenAlex listed 8 of 10 such manuscripts as "closed, no free copy".
 Which version was read is always printed: a preprint's or manuscript's wording and numbers can
@@ -69,10 +70,12 @@ def _from_openalex(p, notes):
 def _from_copies(copies, notes):
     for c in copies:
         try:
-            md, _ = web.scrape(c['url'])
+            md, _, n, total = web.scrape(c['url'], meta=True)
         except net.SourceError as e:
             notes.append('%s -> %s' % (c['url'], e))
             continue
+        if total and n and total > n:
+            notes.append('PDF has %d pages; only the first %d were read (page cap)' % (total, n))
         if _long_enough(md):
             return md, c['url'], c['version']
         notes.append('%s -> only %d characters' % (c['url'], len(md)))
@@ -106,6 +109,8 @@ def read(a):
             if md:
                 got = md, url, 'manuscript'
         if not got:
+            if web.SPENT[0]:
+                notes.append('Firecrawl credits spent by this command: about %d' % web.SPENT[0])
             notes_out(notes)
             print('No readable full text for: %s' % label)
             print('OA status: %s. Use the abstract (`paper %s`), or ask the user for the PDF and read it locally.'
@@ -114,6 +119,8 @@ def read(a):
             print('The built-in web search often finds a public copy this search misses. Try: "%s" pdf, then '
                   '`read <url>` on a repository result.' % p['title'][:150])
             return 1
+    if web.SPENT[0]:
+        notes.append('Firecrawl credits spent by this command: about %d' % web.SPENT[0])
     if not got:
         notes_out(notes)
         print('Could not read: %s' % label)

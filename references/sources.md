@@ -115,6 +115,13 @@ Each verb has one core source; the others enrich it or stand in when it fails.
   DOI link, 100k characters; an MDPI article, 105k characters in 4 s. A publisher landing page also
   scrapes "successfully", so `read` warns when no Introduction/Results/Conclusion heading is found.
 - `POST /v2/search` (web) works without a key at lower limits. `402`/`403` = credits used up.
+- Credits, measured 2026-11-24 against `/team/credit-usage`: paper index 0 (k=20); an HTML page 1;
+  a PDF 1 per page parsed (the docs also list "+1 per PDF page"; a 1-page parse of a 15-page PDF
+  cost 1); web search 2 per 10 results. `parsers: [{"type": "pdf", "maxPages": N}]` caps the parse
+  and the bill; `metadata.totalPages` gives the true length. The free plan is 1000 a month.
+- 638 credits went in the first three weeks of 2026-11, mostly on PDFs during development and the
+  evals. The manuscript search scraped up to six whole PDFs per `read`, most of them the wrong paper.
+  It now reads page 1 of each (1 credit) to check the title, and scrapes only the match in full.
 
 ## Tavily
 
